@@ -150,7 +150,7 @@ async def pricing(data: OrderRequest):
     razorpay_order= razorpay_client.order.create(data=order_data)
 
     return{
-        "id":razorpay_order["id"],
+        "order_id":razorpay_order["id"],
         "amount":razorpay_order["amount"]
     }
 class verification(BaseModel):
