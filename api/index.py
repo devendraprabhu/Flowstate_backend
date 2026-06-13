@@ -12,6 +12,8 @@ import io
 from PIL import Image
 import uuid
 import json
+import razorpay
+from supabase import create_client, Client
 
 load_dotenv()
 
@@ -20,7 +22,7 @@ app = FastAPI()
 client = Groq(
     api_key=os.environ.get("GROQ_API_KEY")
 )
-
+razorpay_client = razorpay.Client(auth=(os.getenv("RAZORPAY_KEY_ID"), os.getenv("RAZORPAY_KEY_SECRET")))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,6 +30,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 @app.get("/")
 async def root():
@@ -128,3 +132,48 @@ async def transcribe_video(req: VideoGeneration):
         # Even if the code crashes above, it will delete the old files.
         if os.path.exists(vid_filename): os.remove(vid_filename)
         if os.path.exists(aud_filename): os.remove(aud_filename)
+
+class OrderRequest(BaseModel):
+    amount:int
+    user_id:str
+
+@app.post("/api/pricing")
+async def pricing(data: OrderRequest):
+    amount_in_paise=data.amount * 100
+    user= data.user_id
+
+    order_data= {
+        "amount":amount_in_paise,
+        "currency":"INR",
+        "receipt":user
+    }
+    razorpay_order= razorpay_client.order.create(data=order_data)
+
+    return{
+        "id":razorpay_order["id"],
+        "amount":razorpay_order["amount"]
+    }
+class verification(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    user_id: str
+    credits_to_add: int
+
+@app.post("/api/verify")
+async def verify(data:verification):
+    try:
+        razorpay_client.utility.verify_payment_signature({
+            'razorpay_order_id':data.razorpay_order_id,
+            'razorpay_payment_id':data.razorpay_payment_id,
+            'razorpay_signature':data.razorpay_signature
+        
+        })
+        user_response=supabase.table("profiles").select("credits").eq("id",data.user_id).execute()
+        current_credits=user_response.data[0]["credits"]
+        new_credits=current_credits+data.credits_to_add
+        supabase.table("profiles").update({"credits":new_credits}).eq("id",data.user_id).execute()
+        return {"status":"success"}
+    except Exception as e:
+        print(f"🚨 URGENT ERROR DETAILS: {str(e)}")
+        raise HTTPException(status_code=400, detail="Invalid Payment Signature")
