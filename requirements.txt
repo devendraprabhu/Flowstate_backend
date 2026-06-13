@@ -5,3 +5,5 @@ requests
 python-dotenv
 pydantic
 moviepy
+razorpay
+supabase
